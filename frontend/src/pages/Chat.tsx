@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { agentApi } from '../services/api';
 import { useAuthStore } from '../stores';
+import MarkdownRenderer from '../components/MarkdownRenderer';
 
 /* ── Inline SVG Icons ── */
 const Icons = {
@@ -326,7 +327,11 @@ export default function Chat() {
                                         </div>
                                     </details>
                                 )}
-                                <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                                {msg.role === 'assistant' ? (
+                                    <MarkdownRenderer content={msg.content} />
+                                ) : (
+                                    <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                                )}
                             </div>
                         </div>
                     ))}

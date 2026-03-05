@@ -6,6 +6,7 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import MarkdownRenderer from './MarkdownRenderer';
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -344,9 +345,13 @@ export default function FileBrowser({
                 ) : !contentLoaded ? (
                     <div style={{ padding: '20px', color: 'var(--text-tertiary)', textAlign: 'center' }}>{t('common.loading')}</div>
                 ) : content ? (
-                    <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)', fontSize: '13px', lineHeight: '1.6', margin: 0 }}>
-                        {content}
-                    </pre>
+                    singleFile?.endsWith('.md') ? (
+                        <MarkdownRenderer content={content} style={{ padding: '4px 0' }} />
+                    ) : (
+                        <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)', fontSize: '13px', lineHeight: '1.6', margin: 0 }}>
+                            {content}
+                        </pre>
+                    )
                 ) : (
                     <div style={{ padding: '20px', color: 'var(--text-tertiary)', textAlign: 'center', fontSize: '13px' }}>
                         {t('common.noData', 'No content yet. Click Edit to add.')}
@@ -391,6 +396,8 @@ export default function FileBrowser({
                         editing ? (
                             <textarea className="form-textarea" value={editContent} onChange={e => setEditContent(e.target.value)}
                                 style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', lineHeight: '1.6', minHeight: '400px' }} />
+                        ) : viewing?.endsWith('.md') ? (
+                            <MarkdownRenderer content={content || ''} style={{ padding: '4px' }} />
                         ) : (
                             <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)', fontSize: '12px', lineHeight: '1.5', margin: 0 }}>
                                 {content || t('common.noData', 'No content yet')}

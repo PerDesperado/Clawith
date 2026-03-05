@@ -243,6 +243,27 @@ AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "read_webpage",
+            "description": "Read and extract the main text content from a web page URL. Useful for reading articles, documentation, news pages, or any public web content. Returns clean readable text/markdown.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The full URL of the web page to read, e.g. 'https://example.com/article'",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Max characters to return (default 4000, max 10000)",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "read_document",
             "description": "Read office document contents (PDF, Word, Excel, PPT, etc.) and extract text. Suitable for reading knowledge base documents.",
             "parameters": {
@@ -535,6 +556,8 @@ async def execute_tool(
             result = await _web_search(arguments)
         elif tool_name == "bing_search":
             result = await _bing_search(arguments)
+        elif tool_name == "read_webpage":
+            result = await _read_webpage(arguments)
         elif tool_name == "plaza_get_new_posts":
             result = await _plaza_get_new_posts(arguments)
         elif tool_name == "plaza_create_post":
@@ -686,6 +709,79 @@ async def _bing_search(arguments: dict) -> str:
         return f'🔍 Bing results for "{query}" ({len(results)} items):\n\n' + "\n\n---\n\n".join(results)
     except Exception as e:
         return f"❌ Bing search error: {str(e)[:200]}"
+
+
+async def _read_webpage(arguments: dict) -> str:
+    """Read web page content using Jina Reader with httpx fallback."""
+    import httpx
+    import re
+    from html import unescape
+
+    url = arguments.get("url", "").strip()
+    if not url:
+        return "❌ Please provide a URL"
+    if not url.startswith("http"):
+        url = "https://" + url
+
+    max_chars = min(arguments.get("max_chars", 4000), 10000)
+
+    # Method 1: Jina Reader (returns clean markdown)
+    try:
+        jina_url = f"https://r.jina.ai/{url}"
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
+            resp = await client.get(
+                jina_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "text/plain, text/markdown, */*",
+                },
+            )
+        if resp.status_code == 200 and len(resp.text) > 100:
+            text = resp.text.strip()
+            if len(text) > max_chars:
+                text = text[:max_chars] + f"\n\n[... truncated at {max_chars} chars]"
+            return f"📄 **Content from: {url}**\n\n{text}"
+    except Exception:
+        pass  # Fall through to direct fetch
+
+    # Method 2: Direct httpx fetch + strip HTML tags
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "text/html,text/plain;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                },
+            )
+        html = resp.text
+
+        # Remove scripts, styles, nav elements
+        html = re.sub(r'<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        # Extract main content hints: article, main, content div
+        main_m = re.search(r'<(article|main)[^>]*>(.*?)</\1>', html, re.DOTALL | re.IGNORECASE)
+        if main_m:
+            html = main_m.group(2)
+
+        # Strip all remaining HTML tags
+        text = re.sub(r'<[^>]+>', ' ', html)
+        text = unescape(text)
+        # Collapse whitespace
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+        text = re.sub(r'[ \t]{3,}', ' ', text)
+        text = text.strip()
+
+        if not text or len(text) < 50:
+            return f"❌ Could not extract meaningful content from {url}"
+
+        if len(text) > max_chars:
+            text = text[:max_chars] + f"\n\n[... truncated at {max_chars} chars]"
+        return f"📄 **Content from: {url}**\n\n{text}"
+
+    except Exception as e:
+        return f"❌ Failed to read {url}: {str(e)[:200]}"
+
 
 
 async def _search_tavily(query: str, api_key: str, max_results: int) -> str:

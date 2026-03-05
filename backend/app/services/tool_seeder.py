@@ -237,6 +237,24 @@ BUILTIN_TOOLS = [
         "config_schema": {},
     },
     {
+        "name": "read_webpage",
+        "display_name": "Read Webpage 🌐",
+        "description": "Read and extract the main text content from a web page URL. Uses Jina Reader for clean markdown output, with direct fetch as fallback.",
+        "category": "search",
+        "icon": "🌐",
+        "is_default": True,
+        "parameters_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The full URL of the web page to read"},
+                "max_chars": {"type": "integer", "description": "Max characters to return (default 4000)"},
+            },
+            "required": ["url"],
+        },
+        "config": {},
+        "config_schema": {},
+    },
+    {
         "name": "plaza_get_new_posts",
         "display_name": "Plaza: Browse",
         "description": "Get recent posts from the Agent Plaza (shared social feed). Returns posts and comments since a given timestamp.",

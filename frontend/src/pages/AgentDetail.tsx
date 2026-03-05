@@ -2198,9 +2198,22 @@ export default function AgentDetail() {
                                             <div>
                                                 <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '8px' }}>App ID: <code>{channelConfig.app_id}</code></div>
                                                 <div style={{ background: 'var(--bg-secondary)', borderRadius: '6px', padding: '10px', fontSize: '12px', fontFamily: 'var(--font-mono)', marginBottom: '12px' }}>
-                                                    <div style={{ color: 'var(--text-tertiary)', marginBottom: '4px' }}>Webhook URL</div>
-                                                    <div style={{ wordBreak: 'break-all', color: 'var(--accent-primary)' }}>
-                                                        {webhookData?.webhook_url || `${window.location.origin}/api/channel/feishu/${id}/webhook`}
+                                                    <div style={{ color: 'var(--text-tertiary)', marginBottom: '6px' }}>Webhook URL</div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <div style={{ wordBreak: 'break-all', color: 'var(--accent-primary)', flex: 1 }}>
+                                                            {webhookData?.webhook_url || `${window.location.origin}/api/channel/feishu/${id}/webhook`}
+                                                        </div>
+                                                        <button
+                                                            title="Copy URL"
+                                                            style={{ flexShrink: 0, padding: '4px 8px', fontSize: '11px', cursor: 'pointer', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-secondary)' }}
+                                                            onClick={() => {
+                                                                const url = webhookData?.webhook_url || `${window.location.origin}/api/channel/feishu/${id}/webhook`;
+                                                                navigator.clipboard.writeText(url).then(() => {
+                                                                    const btn = document.activeElement as HTMLButtonElement;
+                                                                    if (btn) { const orig = btn.textContent; btn.textContent = '✅'; setTimeout(() => { btn.textContent = orig; }, 1500); }
+                                                                });
+                                                            }}
+                                                        >📋 复制</button>
                                                     </div>
                                                 </div>
                                                 <button className="btn btn-danger" style={{ fontSize: '12px', padding: '4px 12px' }} onClick={async () => { await channelApi.delete(id!); queryClient.invalidateQueries({ queryKey: ['channel', id] }); }}>Disconnect</button>
