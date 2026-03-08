@@ -833,6 +833,10 @@ export default function AgentDetail() {
                         cancelled = true;
                         if (msg.includes('expired')) setAgentExpired(true);
                     }
+                } else if (d.type === 'trigger_notification') {
+                    // Trigger fired — show the result as a new assistant message
+                    setChatMessages(prev => [...prev, { role: 'assistant', content: d.content }]);
+                    fetchMySessions(true);
                 } else {
                     setChatMessages(prev => [...prev, { role: d.role, content: d.content }]);
                 }

@@ -373,6 +373,56 @@ async def _invoke_agent_for_triggers(agent_id: uuid.UUID, triggers: list[AgentTr
 
             await db.commit()
 
+        # Push trigger result to user's active WebSocket connections
+        final_reply = reply or "".join(collected_content)
+        if final_reply:
+            try:
+                from app.api.websocket import manager as ws_manager
+                agent_id_str = str(agent_id)
+
+                # Build notification message with trigger badge
+                trigger_badge = ", ".join(trigger_names)
+                notification = f"⚡ **触发器触发** `{trigger_badge}`\n\n{final_reply}"
+
+                # Save to user's most recent web chat session for persistence
+                async with async_session() as db:
+                    from app.models.chat_session import ChatSession
+                    _sr = await db.execute(
+                        select(ChatSession)
+                        .where(
+                            ChatSession.agent_id == agent_id,
+                            ChatSession.user_id == agent.creator_id,
+                            ChatSession.source_channel != "trigger",
+                        )
+                        .order_by(ChatSession.last_message_at.desc().nulls_last())
+                        .limit(1)
+                    )
+                    web_session = _sr.scalar_one_or_none()
+                    if web_session:
+                        db.add(ChatMessage(
+                            agent_id=agent_id,
+                            conversation_id=str(web_session.id),
+                            role="assistant",
+                            content=notification,
+                            user_id=agent.creator_id,
+                        ))
+                        await db.commit()
+
+                # Push to all active WebSocket connections for this agent
+                if agent_id_str in ws_manager.active_connections:
+                    import json as _ws_json
+                    for ws in list(ws_manager.active_connections[agent_id_str]):
+                        try:
+                            await ws.send_json({
+                                "type": "trigger_notification",
+                                "content": notification,
+                                "triggers": [t.name for t in triggers],
+                            })
+                        except Exception:
+                            pass  # Connection may have closed
+            except Exception as e:
+                logger.warning(f"Failed to push trigger result to WebSocket: {e}")
+
         # Audit log
         await write_audit_log("trigger_fired", {
             "agent_name": agent.name,
