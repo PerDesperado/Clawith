@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.0.0",
+    "@xyflow/react": "^12.10.1",
     "i18next": "^24.0.0",
     "i18next-browser-languagedetector": "^8.2.1",
     "react": "^19.0.0",

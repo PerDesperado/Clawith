@@ -12,6 +12,12 @@ import AgentCreate from './pages/AgentCreate';
 import Chat from './pages/Chat';
 import Messages from './pages/Messages';
 import EnterpriseSettings from './pages/EnterpriseSettings';
+import OrgChart from './pages/OrgChart';
+import OrgAI from './pages/OrgAI';
+import TeamReports from './pages/TeamReports';
+import MyAgents from './pages/MyAgents';
+import TeamDashboard from './pages/TeamDashboard';
+import Opportunities from './pages/Opportunities';
 import InvitationCodes from './pages/InvitationCodes';
 import AdminCompanies from './pages/AdminCompanies';
 
@@ -114,6 +120,12 @@ export default function App() {
                     <Route path="agents/:id/chat" element={<Chat />} />
                     <Route path="messages" element={<Messages />} />
                     <Route path="enterprise" element={<EnterpriseSettings />} />
+                    <Route path="org-chart" element={<OrgChart />} />
+                    <Route path="org-ai" element={<OrgAI />} />
+                    <Route path="team-reports" element={<TeamReports />} />
+                    <Route path="my-agents" element={<MyAgents />} />
+                    <Route path="team" element={<TeamDashboard />} />
+                    <Route path="opportunities" element={<Opportunities />} />
                     <Route path="invitations" element={<InvitationCodes />} />
                     <Route path="admin/companies" element={<AdminCompanies />} />
                 </Route>

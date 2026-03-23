@@ -286,6 +286,28 @@ async def report_result(
             await reply_db.commit()
             logger.info(f"[Gateway] Reply routed back to sender agent {msg.sender_agent_id}")
 
+            # Push delivery if sender agent has push_url configured
+            sender_result = await reply_db.execute(
+                select(Agent).where(Agent.id == msg.sender_agent_id)
+            )
+            sender_agent = sender_result.scalar_one_or_none()
+            if sender_agent and getattr(sender_agent, 'push_url', None):
+                from app.services.push_service import push_message_to_agent
+                from app.config import get_settings
+                import asyncio as _aio
+                _s = get_settings()
+                _aio.create_task(push_message_to_agent(
+                    push_url=sender_agent.push_url,
+                    push_headers=getattr(sender_agent, 'push_headers', None),
+                    push_agent_id=getattr(sender_agent, 'push_agent_id', None),
+                    sender_name=agent.name,
+                    conversation_id=conv_id,
+                    content=body.result,
+                    agent_name="Clawith",
+                    message_id=str(gw_reply.id),
+                    report_url=f"{_s.BASE_URL}/api/gateway/report",
+                ))
+
     return {"status": "ok"}
 
 
@@ -503,6 +525,25 @@ async def send_message(
             )
             db.add(gw_msg)
             await db.commit()
+
+            # Push delivery if target agent has push_url configured
+            if getattr(target_agent, 'push_url', None):
+                from app.services.push_service import push_message_to_agent
+                from app.config import get_settings
+                import asyncio as _aio
+                _s = get_settings()
+                _aio.create_task(push_message_to_agent(
+                    push_url=target_agent.push_url,
+                    push_headers=getattr(target_agent, 'push_headers', None),
+                    push_agent_id=getattr(target_agent, 'push_agent_id', None),
+                    sender_name=agent.name,
+                    conversation_id=conv_id,
+                    content=content,
+                    agent_name="Clawith",
+                    message_id=str(gw_msg.id),
+                    report_url=f"{_s.BASE_URL}/api/gateway/report",
+                ))
+
             return {
                 "status": "accepted",
                 "target": target_agent.name,

@@ -4,6 +4,191 @@ import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores';
 import { authApi } from '../services/api';
 
+// Change Password Modal for first-time login
+function ChangePasswordModal({
+    onSuccess,
+    onClose,
+    isChinese,
+}: {
+    onSuccess: () => void;
+    onClose: () => void;
+    isChinese: boolean;
+}) {
+    const [oldPassword, setOldPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError('');
+
+        if (newPassword !== confirmPassword) {
+            setError(isChinese ? '两次输入的密码不一致' : 'Passwords do not match');
+            return;
+        }
+
+        if (newPassword.length < 6) {
+            setError(isChinese ? '新密码至少6个字符' : 'New password must be at least 6 characters');
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('/api/auth/me/password', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+            });
+
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.detail || 'Failed to change password');
+            }
+
+            onSuccess();
+        } catch (err: any) {
+            setError(err.message || (isChinese ? '修改密码失败' : 'Failed to change password'));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 10000,
+        }}>
+            <div style={{
+                background: 'var(--bg-primary)',
+                borderRadius: '16px',
+                padding: '32px',
+                width: '100%',
+                maxWidth: '400px',
+                boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+            }}>
+                <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                    <div style={{ fontSize: '48px', marginBottom: '12px' }}>🔐</div>
+                    <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
+                        {isChinese ? '请修改密码' : 'Change Your Password'}
+                    </h2>
+                    <p style={{ margin: '8px 0 0', fontSize: '14px', color: 'var(--text-secondary)' }}>
+                        {isChinese 
+                            ? '这是您首次登录，请设置一个新密码'
+                            : 'This is your first login. Please set a new password.'
+                        }
+                    </p>
+                </div>
+
+                {error && (
+                    <div style={{
+                        background: 'rgba(255,80,80,0.1)',
+                        border: '1px solid rgba(255,80,80,0.3)',
+                        borderRadius: '8px',
+                        padding: '10px 14px',
+                        marginBottom: '16px',
+                        color: '#ff5050',
+                        fontSize: '13px',
+                    }}>
+                        ⚠ {error}
+                    </div>
+                )}
+
+                <form onSubmit={handleSubmit}>
+                    <div style={{ marginBottom: '16px' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: 500 }}>
+                            {isChinese ? '当前密码' : 'Current Password'}
+                        </label>
+                        <input
+                            type="password"
+                            value={oldPassword}
+                            onChange={e => setOldPassword(e.target.value)}
+                            required
+                            placeholder={isChinese ? '输入管理员提供的初始密码' : 'Enter initial password from admin'}
+                            style={{
+                                width: '100%',
+                                padding: '12px 14px',
+                                borderRadius: '8px',
+                                border: '1px solid var(--border-subtle)',
+                                background: 'var(--bg-secondary)',
+                                fontSize: '14px',
+                            }}
+                        />
+                    </div>
+                    <div style={{ marginBottom: '16px' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: 500 }}>
+                            {isChinese ? '新密码' : 'New Password'}
+                        </label>
+                        <input
+                            type="password"
+                            value={newPassword}
+                            onChange={e => setNewPassword(e.target.value)}
+                            required
+                            minLength={6}
+                            placeholder={isChinese ? '至少6个字符' : 'At least 6 characters'}
+                            style={{
+                                width: '100%',
+                                padding: '12px 14px',
+                                borderRadius: '8px',
+                                border: '1px solid var(--border-subtle)',
+                                background: 'var(--bg-secondary)',
+                                fontSize: '14px',
+                            }}
+                        />
+                    </div>
+                    <div style={{ marginBottom: '24px' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: 500 }}>
+                            {isChinese ? '确认新密码' : 'Confirm New Password'}
+                        </label>
+                        <input
+                            type="password"
+                            value={confirmPassword}
+                            onChange={e => setConfirmPassword(e.target.value)}
+                            required
+                            placeholder={isChinese ? '再次输入新密码' : 'Re-enter new password'}
+                            style={{
+                                width: '100%',
+                                padding: '12px 14px',
+                                borderRadius: '8px',
+                                border: '1px solid var(--border-subtle)',
+                                background: 'var(--bg-secondary)',
+                                fontSize: '14px',
+                            }}
+                        />
+                    </div>
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        style={{
+                            width: '100%',
+                            padding: '14px',
+                            borderRadius: '10px',
+                            border: 'none',
+                            background: 'var(--accent-color)',
+                            color: '#fff',
+                            fontSize: '15px',
+                            fontWeight: 600,
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            opacity: loading ? 0.7 : 1,
+                        }}
+                    >
+                        {loading 
+                            ? (isChinese ? '修改中...' : 'Changing...')
+                            : (isChinese ? '确认修改密码' : 'Confirm Password Change')
+                        }
+                    </button>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 export default function Login() {
     const { t, i18n } = useTranslation();
     const navigate = useNavigate();
@@ -11,12 +196,18 @@ export default function Login() {
     const [isRegister, setIsRegister] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    
+    // Must change password modal
+    const [showChangePassword, setShowChangePassword] = useState(false);
+    const [pendingRedirect, setPendingRedirect] = useState<string | null>(null);
 
     const [form, setForm] = useState({
         username: '',
         password: '',
         email: '',
     });
+
+    const isChinese = i18n.language?.startsWith('zh');
 
     // Login page always uses dark theme (hero panel is dark)
     useEffect(() => {
@@ -43,8 +234,13 @@ export default function Login() {
                 res = await authApi.login({ username: form.username, password: form.password });
             }
             setAuth(res.user, res.access_token);
-            // Redirect to company setup if user has no company assigned
-            if (res.needs_company_setup) {
+            
+            // Check if user must change password
+            if (res.must_change_password) {
+                // Store the intended redirect
+                setPendingRedirect(res.needs_company_setup ? '/setup-company' : '/');
+                setShowChangePassword(true);
+            } else if (res.needs_company_setup) {
                 navigate('/setup-company');
             } else {
                 navigate('/');
@@ -72,9 +268,23 @@ export default function Login() {
             setLoading(false);
         }
     };
+    
+    const handlePasswordChanged = () => {
+        setShowChangePassword(false);
+        navigate(pendingRedirect || '/');
+    };
 
     return (
         <div className="login-page">
+            {/* Change Password Modal */}
+            {showChangePassword && (
+                <ChangePasswordModal
+                    onSuccess={handlePasswordChanged}
+                    onClose={() => setShowChangePassword(false)}
+                    isChinese={isChinese}
+                />
+            )}
+            
             {/* ── Left: Branding Panel ── */}
             <div className="login-hero">
                 <div className="login-hero-bg" />

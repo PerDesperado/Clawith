@@ -818,6 +818,83 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "record_opportunity",
+            "description": "Record a business opportunity (商机) into the shared opportunity table. Use this when user mentions a customer visit, a potential deal, project discussion, or any sales lead. Extract structured data from the conversation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_name": {
+                        "type": "string",
+                        "description": "客户名称 (required)",
+                    },
+                    "visit_date": {
+                        "type": "string",
+                        "description": "拜访日期 (ISO format, e.g. 2026-03-18)",
+                    },
+                    "solution": {
+                        "type": "string",
+                        "description": "讨论的方案内容",
+                    },
+                    "project_duration": {
+                        "type": "string",
+                        "description": "预计项目时长, e.g. '6个月'",
+                    },
+                    "project_scale": {
+                        "type": "string",
+                        "description": "项目规模/预算, e.g. '1000~2000万'",
+                    },
+                    "visit_summary": {
+                        "type": "string",
+                        "description": "拜访纪要/会议摘要",
+                    },
+                    "contact_person": {
+                        "type": "string",
+                        "description": "客户联系人姓名",
+                    },
+                    "estimated_amount": {
+                        "type": "number",
+                        "description": "预计金额 (万元)",
+                    },
+                    "next_action": {
+                        "type": "string",
+                        "description": "下一步行动计划",
+                    },
+                    "raw_input": {
+                        "type": "string",
+                        "description": "用户的原始输入文本 (完整保留)",
+                    },
+                },
+                "required": ["customer_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_opportunities",
+            "description": "Query the shared opportunity table to retrieve business opportunities (商机). Use this to look up customer info, check deal status, analyse pipeline, or prepare reports.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search": {
+                        "type": "string",
+                        "description": "Search keyword (matches customer name, solution, summary)",
+                    },
+                    "stage": {
+                        "type": "string",
+                        "description": "Filter by stage: initial_contact, demand_confirmed, proposal, negotiation, won, lost",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results to return (default 20)",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -826,6 +903,8 @@ AGENT_TOOLS = [
 _ALWAYS_INCLUDE_CORE = {
     "send_channel_file",
     "write_file",
+    "record_opportunity",
+    "query_opportunities",
 }
 # Feishu tools are ONLY included when the agent has a configured Feishu channel,
 # to avoid exposing unnecessary tools to non-Feishu agents (reduces hallucination risk).
@@ -1179,6 +1258,10 @@ async def execute_tool(
         # ── Email Tools ──
         elif tool_name in ("send_email", "read_emails", "reply_email"):
             result = await _handle_email_tool(tool_name, agent_id, ws, arguments)
+        elif tool_name == "record_opportunity":
+            result = await _record_opportunity(agent_id, arguments)
+        elif tool_name == "query_opportunities":
+            result = await _query_opportunities(agent_id, arguments)
         else:
             # Try MCP tool execution
             result = await _execute_mcp_tool(tool_name, arguments, agent_id=agent_id)
@@ -4657,3 +4740,149 @@ async def _handle_email_tool(tool_name: str, agent_id: uuid.UUID, ws: Path, argu
             return f"❌ Unknown email tool: {tool_name}"
     except Exception as e:
         return f"❌ Email tool error: {str(e)[:200]}"
+
+
+# ─── Opportunity Tools ──────────────────────────────────────────
+
+async def _record_opportunity(agent_id: uuid.UUID, arguments: dict) -> str:
+    """Record a business opportunity into the shared DB table."""
+    customer_name = arguments.get("customer_name", "").strip()
+    if not customer_name:
+        return "❌ Missing required field: customer_name"
+
+    try:
+        from app.models.opportunity import Opportunity, OpportunityLog
+        from app.models.agent import Agent
+
+        async with async_session() as db:
+            # Get agent's tenant_id
+            agent_r = await db.execute(select(Agent).where(Agent.id == agent_id))
+            agent = agent_r.scalar_one_or_none()
+            tenant_id = agent.tenant_id if agent else None
+
+            # Parse visit_date
+            visit_date = None
+            raw_date = arguments.get("visit_date")
+            if raw_date:
+                try:
+                    from datetime import datetime
+                    visit_date = datetime.fromisoformat(raw_date)
+                except ValueError:
+                    pass
+
+            # Parse estimated_amount
+            estimated_amount = arguments.get("estimated_amount")
+            if estimated_amount is not None:
+                try:
+                    estimated_amount = float(estimated_amount)
+                except (ValueError, TypeError):
+                    estimated_amount = None
+
+            opp = Opportunity(
+                customer_name=customer_name,
+                visit_date=visit_date,
+                solution=arguments.get("solution"),
+                project_duration=arguments.get("project_duration"),
+                project_scale=arguments.get("project_scale"),
+                visit_summary=arguments.get("visit_summary"),
+                contact_person=arguments.get("contact_person"),
+                estimated_amount=estimated_amount,
+                next_action=arguments.get("next_action"),
+                raw_input=arguments.get("raw_input"),
+                stage="initial_contact",
+                priority="medium",
+                created_by_agent_id=agent_id,
+                tenant_id=tenant_id,
+            )
+            db.add(opp)
+            await db.flush()
+
+            log = OpportunityLog(
+                opportunity_id=opp.id,
+                log_type="stage_change",
+                content=f"商机由数字员工 {agent.name if agent else 'unknown'} 自动录入",
+                created_by_agent_id=agent_id,
+            )
+            db.add(log)
+
+            await db.commit()
+
+            parts = [f"✅ 商机已录入！(ID: {str(opp.id)[:8]}...)"]
+            parts.append(f"  客户: {customer_name}")
+            if visit_date:
+                parts.append(f"  拜访日期: {visit_date.strftime('%Y-%m-%d')}")
+            if arguments.get("solution"):
+                parts.append(f"  方案: {arguments['solution'][:60]}")
+            if arguments.get("project_scale"):
+                parts.append(f"  项目规模: {arguments['project_scale']}")
+            return "\n".join(parts)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"❌ 商机录入失败: {str(e)[:200]}"
+
+
+async def _query_opportunities(agent_id: uuid.UUID, arguments: dict) -> str:
+    """Query opportunities from the shared DB table."""
+    try:
+        from app.models.opportunity import Opportunity
+        from app.models.agent import Agent
+        from sqlalchemy import or_
+
+        async with async_session() as db:
+            # Get agent's tenant_id
+            agent_r = await db.execute(select(Agent).where(Agent.id == agent_id))
+            agent = agent_r.scalar_one_or_none()
+            tenant_id = agent.tenant_id if agent else None
+
+            query = select(Opportunity).where(Opportunity.tenant_id == tenant_id)
+
+            search = arguments.get("search", "").strip()
+            if search:
+                pattern = f"%{search}%"
+                query = query.where(
+                    or_(
+                        Opportunity.customer_name.ilike(pattern),
+                        Opportunity.solution.ilike(pattern),
+                        Opportunity.visit_summary.ilike(pattern),
+                    )
+                )
+
+            stage = arguments.get("stage")
+            if stage:
+                query = query.where(Opportunity.stage == stage)
+
+            limit = min(int(arguments.get("limit", 20)), 50)
+            query = query.order_by(Opportunity.created_at.desc()).limit(limit)
+
+            result = await db.execute(query)
+            opps = result.scalars().all()
+
+            if not opps:
+                return "📋 暂无商机记录" + (f" (搜索: {search})" if search else "")
+
+            lines = [f"📋 找到 {len(opps)} 条商机记录:\n"]
+            stage_labels = {
+                "initial_contact": "初步接触", "demand_confirmed": "需求确认",
+                "proposal": "方案报价", "negotiation": "商务谈判",
+                "won": "赢单", "lost": "输单",
+            }
+            for i, o in enumerate(opps, 1):
+                lines.append(f"{i}. **{o.customer_name}** [{stage_labels.get(o.stage, o.stage)}]")
+                if o.visit_date:
+                    lines.append(f"   拜访日期: {o.visit_date.strftime('%Y-%m-%d')}")
+                if o.solution:
+                    lines.append(f"   方案: {o.solution[:80]}")
+                if o.project_scale:
+                    lines.append(f"   规模: {o.project_scale}")
+                if o.next_action:
+                    lines.append(f"   下一步: {o.next_action[:60]}")
+                if o.risk_flag and o.risk_flag != "none":
+                    lines.append(f"   ⚠️ 风险: {o.risk_flag}")
+                lines.append("")
+
+            return "\n".join(lines)
+
+    except Exception as e:
+        return f"❌ 查询商机失败: {str(e)[:200]}"

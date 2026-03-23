@@ -26,6 +26,8 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user: "UserOut"
     needs_company_setup: bool = False
+    must_change_password: bool = False
+    """True if user must change password on first login (admin-created account)."""
 
 
 class UserOut(BaseModel):
@@ -83,6 +85,10 @@ class AgentCreate(BaseModel):
     max_tokens_per_month: int | None = None
     # Skills to copy into agent workspace
     skill_ids: list[uuid.UUID] = []
+    # Push delivery (OpenClaw): POST messages to external URL instead of polling
+    push_url: str | None = None
+    push_headers: dict | None = None
+    push_agent_id: str | None = None
 
 
 class AgentOut(BaseModel):
@@ -118,6 +124,9 @@ class AgentOut(BaseModel):
     max_llm_calls_per_day: int = 100
     agent_type: str = "native"
     openclaw_last_seen: datetime | None = None
+    push_url: str | None = None
+    push_headers: dict | None = None
+    push_agent_id: str | None = None
     created_at: datetime
     last_active_at: datetime | None = None
 
@@ -144,6 +153,10 @@ class AgentUpdate(BaseModel):
     heartbeat_active_hours: str | None = None
     timezone: str | None = None
     expires_at: datetime | None = None  # Admin only — extend agent expiry
+    # Push delivery config (OpenClaw)
+    push_url: str | None = None
+    push_headers: dict | None = None
+    push_agent_id: str | None = None
 
 
 class AgentStatusOut(BaseModel):

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { enterpriseApi, skillApi } from '../services/api';
@@ -58,9 +59,10 @@ const FALLBACK_LLM_PROVIDERS: LLMProviderSpec[] = [
 
 
 // ─── Department Tree ───────────────────────────────
-function DeptTree({ departments, parentId, selectedDept, onSelect, level }: {
+function DeptTree({ departments, parentId, selectedDept, onSelect, level, onEdit, onDelete }: {
     departments: any[]; parentId: string | null; selectedDept: string | null;
     onSelect: (id: string | null) => void; level: number;
+    onEdit?: (dept: any) => void; onDelete?: (id: string) => void;
 }) {
     const children = departments.filter((d: any) =>
         parentId === null ? !d.parent_id : d.parent_id === parentId
@@ -71,20 +73,28 @@ function DeptTree({ departments, parentId, selectedDept, onSelect, level }: {
             {children.map((d: any) => (
                 <div key={d.id}>
                     <div
+                        className="dept-tree-item"
                         style={{
                             padding: '5px 8px', paddingLeft: `${8 + level * 16}px`, borderRadius: '4px',
                             cursor: 'pointer', fontSize: '13px', marginBottom: '1px',
                             background: selectedDept === d.id ? 'rgba(224,238,238,0.12)' : 'transparent',
+                            display: 'flex', alignItems: 'center', gap: '4px',
                         }}
                         onClick={() => onSelect(d.id)}
                     >
-                        <span style={{ color: 'var(--text-tertiary)', marginRight: '4px', fontSize: '11px' }}>
+                        <span style={{ color: 'var(--text-tertiary)', fontSize: '11px' }}>
                             {departments.some((c: any) => c.parent_id === d.id) ? '▸' : '·'}
                         </span>
-                        {d.name}
-                        {d.member_count > 0 && <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginLeft: '4px' }}>({d.member_count})</span>}
+                        <span style={{ flex: 1 }}>{d.name}</span>
+                        {d.member_count > 0 && <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>({d.member_count})</span>}
+                        {onEdit && (
+                            <button onClick={e => { e.stopPropagation(); onEdit(d); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: 'var(--text-tertiary)', fontSize: '11px', opacity: 0.6 }} title="编辑">✏️</button>
+                        )}
+                        {onDelete && (
+                            <button onClick={e => { e.stopPropagation(); onDelete(d.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: 'var(--text-tertiary)', fontSize: '11px', opacity: 0.6 }} title="删除">🗑️</button>
+                        )}
                     </div>
-                    <DeptTree departments={departments} parentId={d.id} selectedDept={selectedDept} onSelect={onSelect} level={level + 1} />
+                    <DeptTree departments={departments} parentId={d.id} selectedDept={selectedDept} onSelect={onSelect} level={level + 1} onEdit={onEdit} onDelete={onDelete} />
                 </div>
             ))}
         </>
@@ -94,12 +104,24 @@ function DeptTree({ departments, parentId, selectedDept, onSelect, level }: {
 // ─── Org Structure Tab ─────────────────────────────
 function OrgTab() {
     const { t } = useTranslation();
+    const navigate = useNavigate();
     const qc = useQueryClient();
     const [syncForm, setSyncForm] = useState({ app_id: '', app_secret: '' });
     const [syncing, setSyncing] = useState(false);
     const [syncResult, setSyncResult] = useState<any>(null);
     const [memberSearch, setMemberSearch] = useState('');
     const [selectedDept, setSelectedDept] = useState<string | null>(null);
+    const [showSyncConfig, setShowSyncConfig] = useState(false);
+
+    // Department CRUD state
+    const [showAddDept, setShowAddDept] = useState(false);
+    const [editingDept, setEditingDept] = useState<any>(null);
+    const [deptForm, setDeptForm] = useState({ name: '', parent_id: '' });
+
+    // Member CRUD state
+    const [showAddMember, setShowAddMember] = useState(false);
+    const [editingMember, setEditingMember] = useState<any>(null);
+    const [memberForm, setMemberForm] = useState({ name: '', title: '', email: '', phone: '', department_id: '', member_role: 'member' });
 
     const { data: config } = useQuery({
         queryKey: ['system-settings', 'feishu_org_sync'],
@@ -151,75 +173,354 @@ function OrgTab() {
         setSyncing(false);
     };
 
+    // ── Department CRUD handlers ──
+    const handleAddDept = async () => {
+        if (!deptForm.name.trim()) return;
+        try {
+            await fetchJson('/enterprise/org/departments', {
+                method: 'POST',
+                body: JSON.stringify({
+                    name: deptForm.name.trim(),
+                    parent_id: deptForm.parent_id || null,
+                }),
+            });
+            qc.invalidateQueries({ queryKey: ['org-departments'] });
+            setShowAddDept(false);
+            setDeptForm({ name: '', parent_id: '' });
+        } catch (e: any) { alert(e.message); }
+    };
+
+    const handleEditDept = async () => {
+        if (!editingDept || !deptForm.name.trim()) return;
+        try {
+            await fetchJson(`/enterprise/org/departments/${editingDept.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ name: deptForm.name.trim() }),
+            });
+            qc.invalidateQueries({ queryKey: ['org-departments'] });
+            setEditingDept(null);
+        } catch (e: any) { alert(e.message); }
+    };
+
+    const handleDeleteDept = async (deptId: string) => {
+        if (!confirm('确定要删除此部门吗？该部门下的成员将移至未分配。')) return;
+        try {
+            await fetchJson(`/enterprise/org/departments/${deptId}`, { method: 'DELETE' });
+            qc.invalidateQueries({ queryKey: ['org-departments'] });
+            qc.invalidateQueries({ queryKey: ['org-members'] });
+            if (selectedDept === deptId) setSelectedDept(null);
+        } catch (e: any) { alert(e.message); }
+    };
+
+    // ── Member CRUD handlers ──
+    const handleAddMember = async () => {
+        if (!memberForm.name.trim()) return;
+        try {
+            await fetchJson('/enterprise/org/members', {
+                method: 'POST',
+                body: JSON.stringify({
+                    name: memberForm.name.trim(),
+                    title: memberForm.title,
+                    email: memberForm.email || null,
+                    phone: memberForm.phone || null,
+                    department_id: memberForm.department_id || null,
+                    member_role: memberForm.member_role || 'member',
+                }),
+            });
+            qc.invalidateQueries({ queryKey: ['org-members'] });
+            qc.invalidateQueries({ queryKey: ['org-departments'] });
+            setShowAddMember(false);
+            setMemberForm({ name: '', title: '', email: '', phone: '', department_id: '', member_role: 'member' });
+        } catch (e: any) { alert(e.message); }
+    };
+
+    const handleEditMember = async () => {
+        if (!editingMember || !memberForm.name.trim()) return;
+        try {
+            await fetchJson(`/enterprise/org/members/${editingMember.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    name: memberForm.name.trim(),
+                    title: memberForm.title,
+                    email: memberForm.email || null,
+                    phone: memberForm.phone || null,
+                    department_id: memberForm.department_id || null,
+                    member_role: memberForm.member_role || 'member',
+                }),
+            });
+            qc.invalidateQueries({ queryKey: ['org-members'] });
+            qc.invalidateQueries({ queryKey: ['org-departments'] });
+            setEditingMember(null);
+        } catch (e: any) { alert(e.message); }
+    };
+
+    const handleDeleteMember = async (memberId: string) => {
+        if (!confirm('确定要删除此成员吗？')) return;
+        try {
+            await fetchJson(`/enterprise/org/members/${memberId}`, { method: 'DELETE' });
+            qc.invalidateQueries({ queryKey: ['org-members'] });
+            qc.invalidateQueries({ queryKey: ['org-departments'] });
+        } catch (e: any) { alert(e.message); }
+    };
+
     return (
         <div>
-            {/* Sync Config */}
+            {/* Optional Feishu Sync — collapsible */}
             <div className="card" style={{ marginBottom: '16px' }}>
-                <h4 style={{ marginBottom: '12px' }}>{t('enterprise.org.feishuSync')}</h4>
-                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '12px' }}>
-                    {t('enterprise.org.feishuSync')}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <h4 style={{ margin: 0 }}>通讯录管理</h4>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button className="btn btn-secondary" onClick={() => setShowSyncConfig(!showSyncConfig)} style={{ fontSize: '12px' }}>
+                            {showSyncConfig ? '收起飞书同步' : '📡 飞书同步'}
+                        </button>
+                    </div>
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '8px', marginBottom: 0 }}>
+                    手动管理通讯录，也可选择从飞书同步。支持增删改部门和成员。
                 </p>
-                <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
-                    <div style={{ flex: 1 }}>
-                        <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>App ID</label>
-                        <input className="input" value={syncForm.app_id} onChange={e => setSyncForm({ ...syncForm, app_id: e.target.value })} placeholder="cli_xxxxxxxx" />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                        <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>App Secret</label>
-                        <input className="input" type="password" value={syncForm.app_secret} onChange={e => setSyncForm({ ...syncForm, app_secret: e.target.value })} placeholder={config?.value?.app_id ? '' : ''} />
-                    </div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <button className="btn btn-primary" onClick={triggerSync} disabled={syncing || !syncForm.app_id}>
-                        {syncing ? t('enterprise.org.syncing') : t('enterprise.org.syncNow')}
-                    </button>
-                    {config?.value?.last_synced_at && (
-                        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
-                            Last sync: {new Date(config.value.last_synced_at).toLocaleString()}
-                        </span>
-                    )}
-                </div>
-                {syncResult && (
-                    <div style={{ marginTop: '12px', padding: '8px 12px', borderRadius: '6px', fontSize: '12px', background: syncResult.error ? 'rgba(255,0,0,0.1)' : 'rgba(0,200,0,0.1)' }}>
-                        {syncResult.error ? `${syncResult.error}` : t('enterprise.org.syncComplete', { departments: syncResult.departments, members: syncResult.members })}
+
+                {showSyncConfig && (
+                    <div style={{ marginTop: '16px', padding: '16px', borderRadius: '8px', background: 'var(--bg-secondary)' }}>
+                        <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '12px' }}>
+                            {t('enterprise.org.feishuSync')}
+                        </p>
+                        <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                            <div style={{ flex: 1 }}>
+                                <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>App ID</label>
+                                <input className="input" value={syncForm.app_id} onChange={e => setSyncForm({ ...syncForm, app_id: e.target.value })} placeholder="cli_xxxxxxxx" />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                                <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>App Secret</label>
+                                <input className="input" type="password" value={syncForm.app_secret} onChange={e => setSyncForm({ ...syncForm, app_secret: e.target.value })} />
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <button className="btn btn-primary" onClick={triggerSync} disabled={syncing || !syncForm.app_id}>
+                                {syncing ? t('enterprise.org.syncing') : t('enterprise.org.syncNow')}
+                            </button>
+                            {config?.value?.last_synced_at && (
+                                <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
+                                    Last sync: {new Date(config.value.last_synced_at).toLocaleString()}
+                                </span>
+                            )}
+                        </div>
+                        {syncResult && (
+                            <div style={{ marginTop: '12px', padding: '8px 12px', borderRadius: '6px', fontSize: '12px', background: syncResult.error ? 'rgba(255,0,0,0.1)' : 'rgba(0,200,0,0.1)' }}>
+                                {syncResult.error ? `${syncResult.error}` : t('enterprise.org.syncComplete', { departments: syncResult.departments, members: syncResult.members })}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
 
             {/* Department & Members Browser */}
             <div className="card">
-                <h4 style={{ marginBottom: '12px' }}>{t('enterprise.org.orgBrowser')}</h4>
                 <div style={{ display: 'flex', gap: '16px' }}>
-                    <div style={{ width: '260px', borderRight: '1px solid var(--border-subtle)', paddingRight: '16px', maxHeight: '500px', overflowY: 'auto' }}>
-                        <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '8px', color: 'var(--text-secondary)' }}>{t('enterprise.org.allDepartments')}</div>
+                    {/* Left: Departments */}
+                    <div style={{ width: '280px', borderRight: '1px solid var(--border-subtle)', paddingRight: '16px', maxHeight: '600px', overflowY: 'auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>部门</div>
+                            <button className="btn btn-ghost" onClick={() => { setShowAddDept(true); setDeptForm({ name: '', parent_id: selectedDept || '' }); }} style={{ fontSize: '11px', padding: '2px 8px' }} title="添加部门">+ 部门</button>
+                        </div>
+
+                        {/* Add/Edit Department Form */}
+                        {(showAddDept || editingDept) && (
+                            <div style={{ padding: '8px', borderRadius: '6px', background: 'var(--bg-secondary)', marginBottom: '8px' }}>
+                                <input
+                                    className="input"
+                                    value={deptForm.name}
+                                    onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
+                                    placeholder="部门名称"
+                                    style={{ fontSize: '12px', marginBottom: '6px' }}
+                                    autoFocus
+                                    onKeyDown={e => e.key === 'Enter' && (editingDept ? handleEditDept() : handleAddDept())}
+                                />
+                                {showAddDept && departments.length > 0 && (
+                                    <select className="input" value={deptForm.parent_id} onChange={e => setDeptForm({ ...deptForm, parent_id: e.target.value })} style={{ fontSize: '12px', marginBottom: '6px' }}>
+                                        <option value="">无上级部门</option>
+                                        {departments.map((d: any) => (
+                                            <option key={d.id} value={d.id}>{d.name}</option>
+                                        ))}
+                                    </select>
+                                )}
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                    <button className="btn btn-primary" onClick={editingDept ? handleEditDept : handleAddDept} style={{ fontSize: '11px', padding: '3px 10px' }}>
+                                        {editingDept ? '保存' : '添加'}
+                                    </button>
+                                    <button className="btn btn-ghost" onClick={() => { setShowAddDept(false); setEditingDept(null); }} style={{ fontSize: '11px', padding: '3px 10px' }}>取消</button>
+                                </div>
+                            </div>
+                        )}
+
                         <div
                             style={{ padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', marginBottom: '2px', background: !selectedDept ? 'rgba(224,238,238,0.1)' : 'transparent' }}
                             onClick={() => setSelectedDept(null)}
                         >
-                            {t('common.all')}
+                            全部
                         </div>
-                        <DeptTree departments={departments} parentId={null} selectedDept={selectedDept} onSelect={setSelectedDept} level={0} />
-                        {departments.length === 0 && <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', padding: '8px' }}>{t('common.noData')}</div>}
+                        <DeptTree
+                            departments={departments}
+                            parentId={null}
+                            selectedDept={selectedDept}
+                            onSelect={setSelectedDept}
+                            level={0}
+                            onEdit={(dept) => { setEditingDept(dept); setDeptForm({ name: dept.name, parent_id: dept.parent_id || '' }); setShowAddDept(false); }}
+                            onDelete={handleDeleteDept}
+                        />
+                        {departments.length === 0 && <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', padding: '8px' }}>暂无部门，点击上方按钮添加</div>}
                     </div>
 
+                    {/* Right: Members */}
                     <div style={{ flex: 1 }}>
-                        <input className="input" placeholder={t("enterprise.org.searchMembers")} value={memberSearch} onChange={e => setMemberSearch(e.target.value)} style={{ marginBottom: '12px', fontSize: '13px' }} />
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '400px', overflowY: 'auto' }}>
-                            {members.map((m: any) => (
-                                <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
-                                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(224,238,238,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: 600 }}>
-                                        {m.name?.[0] || '?'}
+                        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                            <input className="input" placeholder="搜索成员..." value={memberSearch} onChange={e => setMemberSearch(e.target.value)} style={{ flex: 1, fontSize: '13px' }} />
+                            <button className="btn btn-primary" onClick={() => {
+                                setShowAddMember(true);
+                                setMemberForm({ name: '', title: '', email: '', phone: '', department_id: selectedDept || '' });
+                            }} style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>+ 成员</button>
+                        </div>
+
+                        {/* Add/Edit Member Form */}
+                        {(showAddMember || editingMember) && (
+                            <div style={{ padding: '12px', borderRadius: '8px', border: '1px solid var(--accent)', background: 'var(--bg-secondary)', marginBottom: '12px' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, display: 'block', marginBottom: '2px' }}>姓名 *</label>
+                                        <input className="input" value={memberForm.name} onChange={e => setMemberForm({ ...memberForm, name: e.target.value })} style={{ fontSize: '12px' }} autoFocus />
                                     </div>
                                     <div>
-                                        <div style={{ fontWeight: 500, fontSize: '13px' }}>{m.name}</div>
-                                        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                                            {m.title || '-'} · {m.department_path || '-'}
-                                            {m.email && ` · ${m.email}`}
-                                        </div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, display: 'block', marginBottom: '2px' }}>职位</label>
+                                        <input className="input" value={memberForm.title} onChange={e => setMemberForm({ ...memberForm, title: e.target.value })} style={{ fontSize: '12px' }} />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, display: 'block', marginBottom: '2px' }}>邮箱</label>
+                                        <input className="input" value={memberForm.email} onChange={e => setMemberForm({ ...memberForm, email: e.target.value })} style={{ fontSize: '12px' }} />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, display: 'block', marginBottom: '2px' }}>电话</label>
+                                        <input className="input" value={memberForm.phone} onChange={e => setMemberForm({ ...memberForm, phone: e.target.value })} style={{ fontSize: '12px' }} />
+                                    </div>
+                                    <div style={{ gridColumn: 'span 2' }}>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, display: 'block', marginBottom: '2px' }}>部门</label>
+                                        <select className="input" value={memberForm.department_id} onChange={e => setMemberForm({ ...memberForm, department_id: e.target.value })} style={{ fontSize: '12px' }}>
+                                            <option value="">未分配</option>
+                                            {departments.map((d: any) => {
+                                                // Build full path for display
+                                                const buildPath = (deptId: string): string => {
+                                                    const dept = departments.find((x: any) => x.id === deptId);
+                                                    if (!dept) return '';
+                                                    if (!dept.parent_id) return dept.name;
+                                                    return buildPath(dept.parent_id) + ' / ' + dept.name;
+                                                };
+                                                const fullPath = buildPath(d.id);
+                                                return (
+                                                    <option key={d.id} value={d.id}>{fullPath}</option>
+                                                );
+                                            })}
+                                        </select>
+                                    </div>
+                                    <div style={{ gridColumn: 'span 2' }}>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, display: 'block', marginBottom: '2px' }}>组织角色</label>
+                                        <select className="input" value={memberForm.member_role} onChange={e => setMemberForm({ ...memberForm, member_role: e.target.value })} style={{ fontSize: '12px' }}>
+                                            <option value="member">组员</option>
+                                            <option value="leader">组长</option>
+                                            <option value="deputy_leader">副组长</option>
+                                            <option value="director">总监</option>
+                                            <option value="gm">GM</option>
+                                        </select>
                                     </div>
                                 </div>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button className="btn btn-primary" onClick={editingMember ? handleEditMember : handleAddMember} style={{ fontSize: '12px' }}>
+                                        {editingMember ? '保存' : '添加成员'}
+                                    </button>
+                                    <button className="btn btn-ghost" onClick={() => { setShowAddMember(false); setEditingMember(null); }} style={{ fontSize: '12px' }}>取消</button>
+                                </div>
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '500px', overflowY: 'auto' }}>
+                            {members.map((m: any) => (
+                                <div key={m.id} style={{ padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--accent-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: 600, color: 'var(--accent)' }}>
+                                            {m.avatar_url ? <img src={m.avatar_url} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} /> : (m.name?.[0] || '?')}
+                                        </div>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ fontWeight: 500, fontSize: '14px' }}>{m.name}</div>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                                                {m.title || '-'} · {m.department_path || '未分配'}
+                                                {m.member_role && m.member_role !== 'member' && (
+                                                    <span style={{ 
+                                                        marginLeft: '6px', 
+                                                        padding: '1px 6px', 
+                                                        borderRadius: '4px', 
+                                                        fontSize: '10px',
+                                                        background: m.member_role === 'leader' ? '#f59e0b20' : m.member_role === 'deputy_leader' ? '#f59e0b15' : '#3b82f620',
+                                                        color: m.member_role === 'leader' || m.member_role === 'deputy_leader' ? '#f59e0b' : '#3b82f6',
+                                                    }}>
+                                                        {m.member_role === 'leader' ? '组长' : m.member_role === 'deputy_leader' ? '副组长' : m.member_role === 'director' ? '总监' : m.member_role === 'gm' ? 'GM' : m.member_role}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '4px' }}>
+                                            <button className="btn btn-ghost" onClick={() => {
+                                                setEditingMember(m);
+                                                setMemberForm({
+                                                    name: m.name || '',
+                                                    title: m.title || '',
+                                                    email: m.email || '',
+                                                    phone: m.phone || '',
+                                                    department_id: m.department_id || '',
+                                                    member_role: m.member_role || 'member',
+                                                });
+                                                setShowAddMember(false);
+                                            }} style={{ fontSize: '11px', padding: '3px 8px' }}>编辑</button>
+                                            <button className="btn btn-ghost" onClick={() => handleDeleteMember(m.id)} style={{ fontSize: '11px', padding: '3px 8px', color: 'var(--error)' }}>删除</button>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Bound Digital Employees */}
+                                    {m.bound_agents && m.bound_agents.length > 0 && (
+                                        <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed var(--border-subtle)' }}>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                <span>🤖</span> 绑定的数字员工
+                                            </div>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                                {m.bound_agents.map((agent: any) => (
+                                                    <div
+                                                        key={agent.id}
+                                                        onClick={() => navigate(`/agents/${agent.id}`)}
+                                                        style={{
+                                                            display: 'flex', alignItems: 'center', gap: '6px',
+                                                            padding: '4px 10px', borderRadius: '16px',
+                                                            background: 'var(--accent-subtle)', cursor: 'pointer',
+                                                            transition: 'all 0.15s ease',
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            e.currentTarget.style.background = 'var(--accent)';
+                                                            e.currentTarget.style.color = 'white';
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            e.currentTarget.style.background = 'var(--accent-subtle)';
+                                                            e.currentTarget.style.color = 'inherit';
+                                                        }}
+                                                    >
+                                                        {agent.avatar_url ? (
+                                                            <img src={agent.avatar_url} alt="" style={{ width: '18px', height: '18px', borderRadius: '50%' }} />
+                                                        ) : (
+                                                            <span style={{ fontSize: '12px' }}>🤖</span>
+                                                        )}
+                                                        <span style={{ fontSize: '12px', fontWeight: 500 }}>{agent.name}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             ))}
-                            {members.length === 0 && <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-tertiary)', fontSize: '13px' }}>{t('enterprise.org.noMembers')}</div>}
+                            {members.length === 0 && <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-tertiary)', fontSize: '13px' }}>暂无成员，点击上方按钮添加</div>}
                         </div>
                     </div>
                 </div>

@@ -832,6 +832,50 @@ BUILTIN_TOOLS = [
         "config": {},
         "config_schema": {},
     },
+    {
+        "name": "record_opportunity",
+        "display_name": "Record Opportunity",
+        "description": "Record a business opportunity (商机) into the shared opportunity table. Extract structured data from user messages about customer visits, deals, and sales leads.",
+        "category": "business",
+        "icon": "💼",
+        "is_default": True,
+        "parameters_schema": {
+            "type": "object",
+            "properties": {
+                "customer_name": {"type": "string", "description": "客户名称"},
+                "visit_date": {"type": "string", "description": "拜访日期"},
+                "solution": {"type": "string", "description": "讨论方案"},
+                "project_duration": {"type": "string", "description": "项目时长"},
+                "project_scale": {"type": "string", "description": "项目规模"},
+                "visit_summary": {"type": "string", "description": "拜访纪要"},
+                "contact_person": {"type": "string", "description": "联系人"},
+                "estimated_amount": {"type": "number", "description": "预计金额(万元)"},
+                "next_action": {"type": "string", "description": "下一步行动"},
+                "raw_input": {"type": "string", "description": "原始输入"},
+            },
+            "required": ["customer_name"],
+        },
+        "config": {},
+        "config_schema": {},
+    },
+    {
+        "name": "query_opportunities",
+        "display_name": "Query Opportunities",
+        "description": "Query the shared opportunity table to retrieve business opportunities. Look up customer info, check deal status, analyse pipeline.",
+        "category": "business",
+        "icon": "🔍",
+        "is_default": True,
+        "parameters_schema": {
+            "type": "object",
+            "properties": {
+                "search": {"type": "string", "description": "搜索关键词"},
+                "stage": {"type": "string", "description": "阶段筛选"},
+                "limit": {"type": "integer", "description": "最大返回数"},
+            },
+        },
+        "config": {},
+        "config_schema": {},
+    },
 ]
 
 

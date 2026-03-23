@@ -74,8 +74,13 @@ async def list_agents(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all agents the current user has access to."""
-    # platform_admin & org_admin see all agents (optionally filtered by tenant)
+    """List agents the current user owns or has explicit permission to.
+    
+    Note: Leaders/Directors/GMs can assign tasks to and view reports from
+    subordinates' agents, but they don't see them in the sidebar list.
+    Only platform_admin and org_admin see all agents.
+    """
+    # Platform admin & org_admin see all agents (optionally filtered by tenant)
     if current_user.role in ("platform_admin", "org_admin"):
         stmt = select(Agent)
         if tenant_id:
@@ -91,15 +96,16 @@ async def list_agents(
             await db.commit()
         return [AgentOut.model_validate(a) for a in agents]
 
-    # agent_admin sees their own created agents + permitted
-    # member sees only permitted
-    # All scoped to user's tenant
-    user_tenant = current_user.tenant_id
-
-    # Get agents user created (within their tenant)
-    created = select(Agent).where(Agent.creator_id == current_user.id, Agent.tenant_id == user_tenant)
-
-    # Get agents user has permission to (within their tenant)
+    user_tenant = tenant_id or current_user.tenant_id
+    viewable_agent_ids = set()
+    
+    # 1. Agents user created (within their tenant)
+    created_result = await db.execute(
+        select(Agent.id).where(Agent.creator_id == current_user.id, Agent.tenant_id == user_tenant)
+    )
+    viewable_agent_ids.update([a[0] for a in created_result.all()])
+    
+    # 2. Agents user has explicit permission to (AgentPermission table)
     permitted_ids = (
         select(AgentPermission.agent_id)
         .where(
@@ -111,16 +117,25 @@ async def list_agents(
             )
         )
     )
-    permitted = select(Agent).where(Agent.id.in_(permitted_ids), Agent.tenant_id == user_tenant)
-
-    # Union
-    from sqlalchemy import union_all
-
-    combined = union_all(created, permitted).subquery()
-    result = await db.execute(
-        select(Agent).where(Agent.id.in_(select(combined.c.id))).order_by(Agent.created_at.desc())
+    permitted_result = await db.execute(
+        select(Agent.id).where(Agent.id.in_(permitted_ids), Agent.tenant_id == user_tenant)
     )
-    agents = result.scalars().all()
+    viewable_agent_ids.update([a[0] for a in permitted_result.all()])
+    
+    # Note: Leaders/Directors/GMs do NOT see subordinates' agents here.
+    # They can interact with subordinates' agents through:
+    # - Task assignment API
+    # - Work report viewing API
+    
+    # Fetch all viewable agents
+    if viewable_agent_ids:
+        result = await db.execute(
+            select(Agent).where(Agent.id.in_(viewable_agent_ids)).order_by(Agent.created_at.desc())
+        )
+        agents = result.scalars().all()
+    else:
+        agents = []
+    
     # Lazy reset token counters
     needs_flush = False
     for a in agents:
@@ -188,6 +203,9 @@ async def create_agent(
         max_triggers=default_max_triggers,
         min_poll_interval_min=default_min_poll,
         webhook_rate_limit=default_webhook_rate,
+        push_url=data.push_url,
+        push_headers=data.push_headers,
+        push_agent_id=data.push_agent_id,
     )
     if data.autonomy_policy:
         agent.autonomy_policy = data.autonomy_policy
@@ -273,6 +291,62 @@ async def create_agent(
 
     # Start container
     await agent_manager.start_container(db, agent)
+    await db.flush()
+    
+    # Auto-bind agent to creator (UserAgentBinding for "我的数字员工" page)
+    from app.models.user_agent_binding import UserAgentBinding
+    from app.models.org import AgentRelationship, UserOrgMemberLink, OrgMember
+    
+    # Get user's department from org_member link
+    department_id = None
+    link_result = await db.execute(
+        select(UserOrgMemberLink).where(
+            UserOrgMemberLink.user_id == current_user.id,
+            UserOrgMemberLink.is_primary == True
+        )
+    )
+    link = link_result.scalar_one_or_none()
+    
+    if link:
+        # Get org member's department
+        member_result = await db.execute(
+            select(OrgMember).where(OrgMember.id == link.org_member_id)
+        )
+        org_member = member_result.scalar_one_or_none()
+        if org_member:
+            department_id = org_member.department_id
+        
+        # Also create AgentRelationship (org member -> agent)
+        existing_rel = await db.execute(
+            select(AgentRelationship).where(
+                AgentRelationship.agent_id == agent.id,
+                AgentRelationship.member_id == link.org_member_id
+            )
+        )
+        if not existing_rel.scalar_one_or_none():
+            db.add(AgentRelationship(
+                agent_id=agent.id,
+                member_id=link.org_member_id,
+                relation="owner",
+                description="创建者自动绑定"
+            ))
+    
+    # Create UserAgentBinding (user -> agent) - this shows in "我的数字员工"
+    existing_binding = await db.execute(
+        select(UserAgentBinding).where(
+            UserAgentBinding.user_id == current_user.id,
+            UserAgentBinding.agent_id == agent.id
+        )
+    )
+    if not existing_binding.scalar_one_or_none():
+        db.add(UserAgentBinding(
+            user_id=current_user.id,
+            agent_id=agent.id,
+            department_id=department_id,
+            org_role="member",
+            is_active=True
+        ))
+    
     await db.flush()
 
     return AgentOut.model_validate(agent)

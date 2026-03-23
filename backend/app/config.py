@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SECRET_KEY: str = "change-me-in-production"
     API_PREFIX: str = "/api"
+    # Public base URL (used for report callbacks etc.)
+    BASE_URL: str = "http://localhost:8008"
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://clawith:clawith@localhost:5432/clawith"

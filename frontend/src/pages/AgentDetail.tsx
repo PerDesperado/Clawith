@@ -953,6 +953,9 @@ function AgentDetailInner() {
         max_triggers: 20,
         min_poll_interval_min: 5,
         webhook_rate_limit: 5,
+        push_url: '',
+        push_headers: '' as string,
+        push_agent_id: '',
     });
     const [settingsSaving, setSettingsSaving] = useState(false);
     const [settingsSaved, setSettingsSaved] = useState(false);
@@ -972,6 +975,9 @@ function AgentDetailInner() {
                 max_triggers: (agent as any).max_triggers ?? 20,
                 min_poll_interval_min: (agent as any).min_poll_interval_min ?? 5,
                 webhook_rate_limit: (agent as any).webhook_rate_limit ?? 5,
+                push_url: (agent as any).push_url || '',
+                push_headers: (agent as any).push_headers ? JSON.stringify((agent as any).push_headers) : '',
+                push_agent_id: (agent as any).push_agent_id || '',
             });
             settingsInitRef.current = true;
         }
@@ -3414,7 +3420,10 @@ function AgentDetailInner() {
                             String(settingsForm.max_tokens_per_month) !== String(agent?.max_tokens_per_month || '') ||
                             settingsForm.max_triggers !== ((agent as any)?.max_triggers ?? 20) ||
                             settingsForm.min_poll_interval_min !== ((agent as any)?.min_poll_interval_min ?? 5) ||
-                            settingsForm.webhook_rate_limit !== ((agent as any)?.webhook_rate_limit ?? 5)
+                            settingsForm.webhook_rate_limit !== ((agent as any)?.webhook_rate_limit ?? 5) ||
+                            settingsForm.push_url !== ((agent as any)?.push_url || '') ||
+                            settingsForm.push_headers !== ((agent as any)?.push_headers ? JSON.stringify((agent as any).push_headers) : '') ||
+                            settingsForm.push_agent_id !== ((agent as any)?.push_agent_id || '')
                         );
 
                         const handleSaveSettings = async () => {
@@ -3431,6 +3440,9 @@ function AgentDetailInner() {
                                     max_triggers: settingsForm.max_triggers,
                                     min_poll_interval_min: settingsForm.min_poll_interval_min,
                                     webhook_rate_limit: settingsForm.webhook_rate_limit,
+                                    push_url: settingsForm.push_url || null,
+                                    push_headers: settingsForm.push_headers ? JSON.parse(settingsForm.push_headers) : null,
+                                    push_agent_id: settingsForm.push_agent_id || null,
                                 } as any);
                                 queryClient.invalidateQueries({ queryKey: ['agent', id] });
                                 settingsInitRef.current = false;
@@ -3653,6 +3665,68 @@ function AgentDetailInner() {
                                                     />
                                                     <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
                                                         {isChinese ? '外部系统每分钟最多可调用的 Webhook 次数' : 'Max webhook calls per minute from external services'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* Push Delivery Config — OpenClaw agents only */}
+                                {(agent as any)?.agent_type === 'openclaw' && (() => {
+                                    const isChinese = i18n.language?.startsWith('zh');
+                                    return (
+                                        <div className="card" style={{ marginBottom: '12px' }}>
+                                            <h4 style={{ marginBottom: '4px' }}>🚀 {isChinese ? '推送配置' : 'Push Delivery'}</h4>
+                                            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '12px' }}>
+                                                {isChinese
+                                                    ? '配置推送地址后，平台会主动将消息 POST 到指定 URL，无需 Agent 轮询。'
+                                                    : 'When configured, the platform will POST messages to this URL instead of waiting for the agent to poll.'}
+                                            </p>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '6px' }}>
+                                                        {isChinese ? '推送 URL' : 'Push URL'}
+                                                    </label>
+                                                    <input
+                                                        className="input"
+                                                        type="url"
+                                                        value={settingsForm.push_url}
+                                                        onChange={(e) => setSettingsForm(f => ({ ...f, push_url: e.target.value }))}
+                                                        placeholder="http://129.204.148.93:18789/hooks/agent"
+                                                        style={{ width: '100%' }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '6px' }}>
+                                                        {isChinese ? '认证头 (JSON)' : 'Auth Headers (JSON)'}
+                                                    </label>
+                                                    <input
+                                                        className="input"
+                                                        type="text"
+                                                        value={settingsForm.push_headers}
+                                                        onChange={(e) => setSettingsForm(f => ({ ...f, push_headers: e.target.value }))}
+                                                        placeholder='{"Authorization": "Bearer xxx"}'
+                                                        style={{ width: '100%', fontFamily: 'monospace', fontSize: '12px' }}
+                                                    />
+                                                    <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+                                                        {isChinese ? 'JSON 格式的 HTTP 请求头，用于认证' : 'JSON-formatted HTTP headers for authentication'}
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '6px' }}>
+                                                        Agent ID
+                                                    </label>
+                                                    <input
+                                                        className="input"
+                                                        type="text"
+                                                        value={settingsForm.push_agent_id}
+                                                        onChange={(e) => setSettingsForm(f => ({ ...f, push_agent_id: e.target.value }))}
+                                                        placeholder="coordinator"
+                                                        style={{ width: '100%' }}
+                                                    />
+                                                    <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+                                                        {isChinese ? '目标 OpenClaw 系统中的 agentId' : 'Target agentId in the OpenClaw system'}
                                                     </div>
                                                 </div>
                                             </div>

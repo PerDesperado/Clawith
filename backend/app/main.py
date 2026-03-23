@@ -1,6 +1,7 @@
 """Clawith Backend — FastAPI Application Entry Point."""
 
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,6 +52,43 @@ async def _start_ss_local() -> None:
     print("[Proxy] All SS nodes failed — Discord API calls will run without proxy", flush=True)
 
 
+async def _run_daily_summary_scheduler() -> None:
+    """Background task: generate daily summaries at 23:55 every day."""
+    import asyncio
+    from datetime import date, datetime, timezone
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            # Calculate next 23:55 UTC
+            target = now.replace(hour=23, minute=55, second=0, microsecond=0)
+            if now >= target:
+                target += timedelta(days=1)
+            wait_seconds = (target - now).total_seconds()
+            await asyncio.sleep(min(wait_seconds, 3600))  # Wake up at least every hour to recheck
+
+            # Check if it's time (within 5 min window)
+            now2 = datetime.now(timezone.utc)
+            if now2.hour == 23 and 50 <= now2.minute <= 59:
+                # Generate per-user daily summaries
+                from app.services.daily_summary_service import generate_all_daily_summaries
+                await generate_all_daily_summaries()
+                # Generate per-agent daily reports (auto, pending review)
+                try:
+                    from app.database import async_session
+                    from app.services.agent_report_service import generate_all_agent_reports
+                    async with async_session() as db:
+                        await generate_all_agent_reports(db)
+                    print("[DailySummaryScheduler] Agent daily reports generated", flush=True)
+                except Exception as e:
+                    print(f"[DailySummaryScheduler] Agent reports error: {e}", flush=True)
+                await asyncio.sleep(600)  # Prevent re-trigger
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            print(f"[DailySummaryScheduler] Error: {e}", flush=True)
+            await asyncio.sleep(300)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
@@ -88,6 +126,9 @@ async def lifespan(app: FastAPI):
         import app.models.trigger        # noqa
         import app.models.notification   # noqa
         import app.models.gateway_message # noqa
+        import app.models.user_agent_binding  # noqa
+        import app.models.team_task  # noqa
+        import app.models.opportunity  # noqa
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             # Add 'atlassian' to channel_type_enum if it doesn't exist yet (idempotent)
@@ -173,6 +214,7 @@ async def lifespan(app: FastAPI):
             ("feishu_ws", feishu_ws_manager.start_all()),
             ("dingtalk_stream", dingtalk_stream_manager.start_all()),
             ("wecom_stream", wecom_stream_manager.start_all()),
+            ("daily_summary_scheduler", _run_daily_summary_scheduler()),
         ]:
             task = asyncio.create_task(coro, name=name)
             task.add_done_callback(_bg_task_error)
@@ -243,6 +285,12 @@ from app.api.webhooks import router as webhooks_router
 from app.api.notification import router as notification_router
 from app.api.gateway import router as gateway_router
 from app.api.admin import router as admin_router
+from app.api.bindings import router as bindings_router
+from app.api.team_tasks import router as team_tasks_router
+from app.api.opportunities import router as opportunities_router
+from app.api.org_ai import router as org_ai_router
+from app.api.reports import router as reports_router
+from app.api.user_management import router as user_management_router
 
 app.include_router(auth_router, prefix=settings.API_PREFIX)
 app.include_router(agents_router, prefix=settings.API_PREFIX)
@@ -278,6 +326,12 @@ app.include_router(webhooks_router)  # Public endpoint, no API prefix
 app.include_router(ws_router)
 app.include_router(gateway_router, prefix=settings.API_PREFIX)
 app.include_router(admin_router, prefix=settings.API_PREFIX)
+app.include_router(bindings_router, prefix=settings.API_PREFIX)
+app.include_router(team_tasks_router, prefix=settings.API_PREFIX)
+app.include_router(opportunities_router, prefix=settings.API_PREFIX)
+app.include_router(org_ai_router, prefix=settings.API_PREFIX)
+app.include_router(reports_router, prefix=settings.API_PREFIX)
+app.include_router(user_management_router, prefix=settings.API_PREFIX)
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["health"])

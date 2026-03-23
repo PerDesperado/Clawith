@@ -404,6 +404,11 @@ async def websocket_chat(
     llm_model = None
     fallback_llm_model = None
     history_messages = []
+    # Push delivery config (OpenClaw)
+    push_url = None
+    push_headers = None
+    push_agent_id = None
+    user_display_name = ""
 
     try:
         async with async_session() as db:
@@ -427,8 +432,12 @@ async def websocket_chat(
             agent_type = agent.agent_type or ""
             role_description = agent.role_description or ""
             welcome_message = agent.welcome_message or ""
+            push_url = getattr(agent, 'push_url', None)
+            push_headers = getattr(agent, 'push_headers', None)
+            push_agent_id = getattr(agent, 'push_agent_id', None)
+            user_display_name = user.display_name or user.username
             ctx_size = agent.context_window_size or 100
-            print(f"[WS] Agent: {agent_name}, type: {agent_type}, model_id: {agent.primary_model_id}, ctx: {ctx_size}")
+            print(f"[WS] Agent: {agent_name}, type: {agent_type}, model_id: {agent.primary_model_id}, ctx: {ctx_size}, push_url={'yes' if push_url else 'no'}")
 
             # Load the agent's primary model
             if agent.primary_model_id:
@@ -634,6 +643,7 @@ async def websocket_chat(
             # ── OpenClaw routing: insert into gateway_messages instead of LLM ──
             if agent_type == "openclaw":
                 from app.models.gateway_message import GatewayMessage as GwMsg
+                gw_msg_id = None
                 async with async_session() as db:
                     gw_msg = GwMsg(
                         agent_id=agent_id,
@@ -643,8 +653,37 @@ async def websocket_chat(
                         status="pending",
                     )
                     db.add(gw_msg)
+                    await db.flush()
+                    gw_msg_id = str(gw_msg.id)
                     await db.commit()
-                print(f"[WS] OpenClaw: message queued for gateway poll")
+                print(f"[WS] OpenClaw: message queued for gateway poll, msg_id={gw_msg_id}")
+
+                # Push delivery: POST to external URL if configured
+                if push_url:
+                    from app.services.push_service import push_message_to_agent
+                    from app.config import get_settings
+                    import asyncio as _aio
+                    _s = get_settings()
+                    print(f"[WS] Pushing to {push_url} with message_id={gw_msg_id}")
+                    task = _aio.create_task(push_message_to_agent(
+                        push_url=push_url,
+                        push_headers=push_headers,
+                        push_agent_id=push_agent_id,
+                        sender_name=user_display_name,
+                        conversation_id=conv_id,
+                        content=content,
+                        history=None,
+                        agent_name="Clawith",
+                        message_id=gw_msg_id,
+                        report_url=f"{_s.BASE_URL}/api/gateway/report",
+                    ))
+                    def _push_done(t):
+                        if t.exception():
+                            print(f"[WS] Push task FAILED: {t.exception()}")
+                        else:
+                            print(f"[WS] Push task completed, result={t.result()}")
+                    task.add_done_callback(_push_done)
+
                 await websocket.send_json({
                     "type": "done",
                     "role": "assistant",

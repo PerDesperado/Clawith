@@ -380,3 +380,140 @@ export const triggerApi = {
     delete: (agentId: string, triggerId: string) =>
         request<void>(`/agents/${agentId}/triggers/${triggerId}`, { method: 'DELETE' }),
 };
+
+// ─── Bindings (User-Agent) ────────────────────────────
+export const bindingsApi = {
+    list: () =>
+        request<any[]>('/bindings/'),
+
+    create: (agentId: string) =>
+        request<any>('/bindings/', { method: 'POST', body: JSON.stringify({ agent_id: agentId }) }),
+
+    delete: (bindingId: string) =>
+        request<void>(`/bindings/${bindingId}`, { method: 'DELETE' }),
+
+    toggle: (bindingId: string) =>
+        request<any>(`/bindings/${bindingId}/toggle`, { method: 'PATCH' }),
+
+    summaries: (startDate?: string, endDate?: string) => {
+        const params = new URLSearchParams();
+        if (startDate) params.set('start_date', startDate);
+        if (endDate) params.set('end_date', endDate);
+        return request<any[]>(`/bindings/summaries?${params}`);
+    },
+
+    generateSummary: (targetDate?: string) => {
+        const params = targetDate ? `?target_date=${targetDate}` : '';
+        return request<any>(`/bindings/summaries/generate${params}`, { method: 'POST' });
+    },
+};
+
+// ─── Team Tasks ───────────────────────────────────────
+export const teamApi = {
+    // Tasks
+    listTasks: (params?: Record<string, string>) => {
+        const query = params ? '?' + new URLSearchParams(params).toString() : '';
+        return request<any[]>(`/team/tasks${query}`);
+    },
+    
+    createTask: (data: any) =>
+        request<any>('/team/tasks', { method: 'POST', body: JSON.stringify(data) }),
+    
+    getTask: (id: string) =>
+        request<any>(`/team/tasks/${id}`),
+    
+    updateTask: (id: string, data: any) =>
+        request<any>(`/team/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    
+    addSubtask: (parentId: string, data: any) =>
+        request<any>(`/team/tasks/${parentId}/subtasks`, { method: 'POST', body: JSON.stringify(data) }),
+    
+    addTaskLog: (taskId: string, content: string, logType: string = 'progress') =>
+        request<any>(`/team/tasks/${taskId}/logs`, { method: 'POST', body: JSON.stringify({ content, log_type: logType }) }),
+    
+    decomposeTask: (taskId: string, prompt?: string) =>
+        request<any>(`/team/tasks/${taskId}/decompose`, { method: 'POST', body: JSON.stringify({ prompt }) }),
+    
+    reviewTask: (taskId: string, action: string, feedback?: string) =>
+        request<any>(`/team/tasks/${taskId}/review`, {
+            method: 'POST',
+            body: JSON.stringify({ action, feedback }),
+        }),
+    
+    dispatchTask: (taskId: string) =>
+        request<any>(`/team/tasks/${taskId}/dispatch`, { method: 'POST' }),
+    
+    // Reports
+    listAgentReports: (params?: Record<string, string>) => {
+        const query = params ? '?' + new URLSearchParams(params).toString() : '';
+        return request<any[]>(`/team/reports/agents${query}`);
+    },
+    
+    getAgentReport: (agentId: string, date: string) =>
+        request<any>(`/team/reports/agents/${agentId}/${date}`),
+    
+    generateAgentReport: (agentId: string, date?: string) => {
+        const query = date ? `?target_date=${date}` : '';
+        return request<any>(`/team/reports/agents/${agentId}/generate${query}`, { method: 'POST' });
+    },
+
+    listPendingReports: () =>
+        request<any[]>('/team/reports/pending'),
+
+    confirmReport: (reportId: string, action: 'confirm' | 'reject', comment?: string) =>
+        request<any>(`/team/reports/${reportId}/confirm`, {
+            method: 'POST',
+            body: JSON.stringify({ action, comment }),
+        }),
+    
+    // Dashboard
+    getDashboardStats: () =>
+        request<any>('/team/dashboard/stats'),
+};
+
+// ─── Reports (日报汇报) ───────────────────────────────
+export const reportsApi = {
+    getHierarchy: () =>
+        request<{ departments: any[] }>('/reports/hierarchy'),
+
+    getMyTeam: (agentId: string, reportDate: string) =>
+        request<any>(`/reports/my-team?agent_id=${agentId}&report_date=${reportDate}`),
+
+    getConsolidated: (agentId: string, reportDate: string) =>
+        request<any>(`/reports/my-team/consolidated?agent_id=${agentId}&report_date=${reportDate}`),
+
+    generateForAgent: (agentId: string, reportDate: string) =>
+        request<any>(`/reports/agent/${agentId}/generate?report_date=${reportDate}`, { method: 'POST' }),
+};
+
+// ─── Opportunities (商机) ─────────────────────────────
+export const opportunityApi = {
+    list: (params?: Record<string, string>) => {
+        const query = params ? '?' + new URLSearchParams(params).toString() : '';
+        return request<{ items: any[]; total: number; stages: Record<string, string> }>(`/opportunities/${query}`);
+    },
+
+    get: (id: string) =>
+        request<any>(`/opportunities/${id}`),
+
+    create: (data: any) =>
+        request<any>('/opportunities/', { method: 'POST', body: JSON.stringify(data) }),
+
+    update: (id: string, data: any) =>
+        request<any>(`/opportunities/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+
+    delete: (id: string) =>
+        request<void>(`/opportunities/${id}`, { method: 'DELETE' }),
+
+    stats: () =>
+        request<any>('/opportunities/stats'),
+
+    logs: (id: string) =>
+        request<any[]>(`/opportunities/${id}/logs`),
+
+    addLog: (id: string, content: string, logType: string = 'note') =>
+        request<any>(`/opportunities/${id}/logs`, {
+            method: 'POST',
+            body: JSON.stringify({ content, log_type: logType }),
+        }),
+};

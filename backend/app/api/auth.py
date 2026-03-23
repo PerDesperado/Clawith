@@ -133,11 +133,13 @@ async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
             )
 
     needs_setup = user.tenant_id is None
+    must_change_password = getattr(user, 'must_change_password', False)
     token = create_access_token(str(user.id), user.role)
     return TokenResponse(
         access_token=token,
         user=UserOut.model_validate(user),
         needs_company_setup=needs_setup,
+        must_change_password=must_change_password,
     )
 
 
@@ -174,7 +176,10 @@ async def change_password(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Change current user's password. Requires old_password verification."""
+    """Change current user's password. Requires old_password verification.
+    
+    If the user has must_change_password=True (set by admin), this clears that flag.
+    """
     old_password = data.get("old_password", "")
     new_password = data.get("new_password", "")
 
@@ -188,5 +193,6 @@ async def change_password(
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
     current_user.password_hash = hash_password(new_password)
+    current_user.must_change_password = False  # Clear the flag after password change
     await db.flush()
     return {"ok": True}

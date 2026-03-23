@@ -38,6 +38,9 @@ export interface Agent {
     context_window_size?: number;
     agent_type?: 'native' | 'openclaw';
     openclaw_last_seen?: string;
+    push_url?: string;
+    push_headers?: Record<string, string>;
+    push_agent_id?: string;
     created_at: string;
     last_active_at?: string;
 }
@@ -76,4 +79,5 @@ export interface TokenResponse {
     token_type: string;
     user: User;
     needs_company_setup?: boolean;
+    must_change_password?: boolean;
 }

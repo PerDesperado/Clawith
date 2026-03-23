@@ -82,6 +82,11 @@ class Agent(Base):
     min_poll_interval_min: Mapped[int] = mapped_column(Integer, default=5)
     webhook_rate_limit: Mapped[int] = mapped_column(Integer, default=5)
 
+    # Push delivery (OpenClaw agents): POST messages to an external URL instead of polling
+    push_url: Mapped[str | None] = mapped_column(String(500), default=None, nullable=True)
+    push_headers: Mapped[dict | None] = mapped_column(JSON, default=None, nullable=True)
+    push_agent_id: Mapped[str | None] = mapped_column(String(100), default=None, nullable=True)
+
     # Expiry control
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_expired: Mapped[bool] = mapped_column(Boolean, default=False)

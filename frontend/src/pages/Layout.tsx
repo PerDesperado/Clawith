@@ -388,6 +388,31 @@ export default function Layout() {
                                 <span className="sidebar-item-text">{t('nav.newAgent')}</span>
                             </NavLink>
                         )}
+                        {user && (
+                            <NavLink to="/my-agents" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} title={isChinese ? '我的数字员工' : 'My Agents'}>
+                                <span className="sidebar-item-icon" style={{ display: 'flex', fontSize: '14px' }}>🤖</span>
+                                <span className="sidebar-item-text">{isChinese ? '我的数字员工' : 'My Agents'}</span>
+                            </NavLink>
+                        )}
+
+                        {user && (
+                            <NavLink to="/team-reports" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} title={isChinese ? '团队日报' : 'Team Reports'}>
+                                <span className="sidebar-item-icon" style={{ display: 'flex', fontSize: '14px' }}>📊</span>
+                                <span className="sidebar-item-text">{isChinese ? '团队日报' : 'Team Reports'}</span>
+                            </NavLink>
+                        )}
+                        {user && (
+                            <NavLink to="/team" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} title={isChinese ? '团队协作' : 'Team'}>
+                                <span className="sidebar-item-icon" style={{ display: 'flex', fontSize: '14px' }}>👥</span>
+                                <span className="sidebar-item-text">{isChinese ? '团队协作' : 'Team'}</span>
+                            </NavLink>
+                        )}
+                        {user && (
+                            <NavLink to="/opportunities" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} title={isChinese ? '商机管理' : 'Opportunities'}>
+                                <span className="sidebar-item-icon" style={{ display: 'flex', fontSize: '14px' }}>💼</span>
+                                <span className="sidebar-item-text">{isChinese ? '商机管理' : 'Opportunities'}</span>
+                            </NavLink>
+                        )}
                         {user && ['platform_admin', 'org_admin'].includes(user.role) && (
                             <NavLink to="/enterprise" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} title={t('nav.enterprise')}>
                                 <span className="sidebar-item-icon" style={{ display: 'flex' }}>{SidebarIcons.settings}</span>

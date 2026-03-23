@@ -547,7 +547,14 @@ async def list_org_members(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List org members, optionally filtered by department, search, or tenant."""
+    """List org members, optionally filtered by department, search, or tenant.
+    
+    Returns bound digital employees for each member via AgentRelationship table.
+    """
+    from app.models.org import AgentRelationship
+    from app.models.agent import Agent
+    from sqlalchemy.orm import selectinload
+
     query = select(OrgMember).where(OrgMember.status == "active")
     if tenant_id:
         query = query.where(OrgMember.tenant_id == uuid.UUID(tenant_id))
@@ -558,14 +565,59 @@ async def list_org_members(
     query = query.order_by(OrgMember.name).limit(100)
     result = await db.execute(query)
     members = result.scalars().all()
+
+    # Collect member IDs to find bound agents via AgentRelationship
+    member_ids = [m.id for m in members]
+    
+    # Find agents bound to these members via agent_relationships table
+    member_agents: dict[str, list[dict]] = {}  # member_id -> list of agents
+    if member_ids:
+        # Get all relationships for these members
+        rels_result = await db.execute(
+            select(AgentRelationship)
+            .where(AgentRelationship.member_id.in_(member_ids))
+        )
+        relationships = rels_result.scalars().all()
+        
+        # Get unique agent IDs
+        agent_ids = list(set(r.agent_id for r in relationships))
+        
+        if agent_ids:
+            # Fetch agent details
+            agents_result = await db.execute(
+                select(Agent).where(Agent.id.in_(agent_ids))
+            )
+            agents_map = {a.id: a for a in agents_result.scalars().all()}
+            
+            # Build member_agents mapping
+            for r in relationships:
+                member_id_str = str(r.member_id)
+                if member_id_str not in member_agents:
+                    member_agents[member_id_str] = []
+                agent = agents_map.get(r.agent_id)
+                if agent:
+                    member_agents[member_id_str].append({
+                        "id": str(agent.id),
+                        "name": agent.name,
+                        "avatar_url": agent.avatar_url,
+                        "status": agent.status,
+                        "role_description": agent.role_description,
+                        "relation": r.relation,
+                    })
+
     return [
         {
             "id": str(m.id),
             "name": m.name,
             "email": m.email,
             "title": m.title,
+            "phone": m.phone,
+            "department_id": str(m.department_id) if m.department_id else None,
             "department_path": m.department_path,
+            "member_role": m.member_role,
             "avatar_url": m.avatar_url,
+            "feishu_open_id": m.feishu_open_id,
+            "bound_agents": member_agents.get(str(m.id), []),
         }
         for m in members
     ]
@@ -579,6 +631,272 @@ async def trigger_org_sync(
     from app.services.org_sync_service import org_sync_service
     result = await org_sync_service.full_sync()
     return result
+
+
+# ─── Manual Org CRUD (self-managed contacts) ────────
+
+class OrgDeptCreate(BaseModel):
+    name: str
+    parent_id: str | None = None
+
+class OrgDeptUpdate(BaseModel):
+    name: str | None = None
+    parent_id: str | None = None
+
+class OrgMemberCreate(BaseModel):
+    name: str
+    title: str | None = ""
+    email: str | None = None
+    phone: str | None = None
+    department_id: str | None = None
+    member_role: str | None = "member"
+
+class OrgMemberUpdate(BaseModel):
+    name: str | None = None
+    title: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    department_id: str | None = None
+    member_role: str | None = None
+
+
+@router.post("/org/departments")
+async def create_org_department(
+    data: OrgDeptCreate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new org department manually."""
+    dept = OrgDepartment(
+        name=data.name,
+        parent_id=uuid.UUID(data.parent_id) if data.parent_id else None,
+        tenant_id=current_user.tenant_id,
+        feishu_id=None,
+    )
+    db.add(dept)
+    await db.flush()
+    await db.commit()
+    return {
+        "id": str(dept.id),
+        "name": dept.name,
+        "parent_id": str(dept.parent_id) if dept.parent_id else None,
+        "member_count": 0,
+    }
+
+
+@router.patch("/org/departments/{dept_id}")
+async def update_org_department(
+    dept_id: uuid.UUID,
+    data: OrgDeptUpdate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an org department."""
+    result = await db.execute(select(OrgDepartment).where(OrgDepartment.id == dept_id))
+    dept = result.scalar_one_or_none()
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found")
+    if data.name is not None:
+        dept.name = data.name
+    if data.parent_id is not None:
+        dept.parent_id = uuid.UUID(data.parent_id) if data.parent_id else None
+    await db.commit()
+    return {"id": str(dept.id), "name": dept.name, "parent_id": str(dept.parent_id) if dept.parent_id else None}
+
+
+@router.delete("/org/departments/{dept_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_org_department(
+    dept_id: uuid.UUID,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an org department. Moves members to unassigned."""
+    result = await db.execute(select(OrgDepartment).where(OrgDepartment.id == dept_id))
+    dept = result.scalar_one_or_none()
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found")
+    # Move members to no department
+    from sqlalchemy import update
+    await db.execute(
+        update(OrgMember).where(OrgMember.department_id == dept_id).values(department_id=None, department_path="")
+    )
+    # Move child departments to parent
+    await db.execute(
+        update(OrgDepartment).where(OrgDepartment.parent_id == dept_id).values(parent_id=dept.parent_id)
+    )
+    await db.delete(dept)
+    await db.commit()
+
+
+@router.post("/org/members")
+async def create_org_member(
+    data: OrgMemberCreate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new org member manually."""
+    from app.models.org import OrgManagementRelation
+    
+    # Build department_path
+    dept_path = ""
+    dept = None
+    if data.department_id:
+        dept_result = await db.execute(select(OrgDepartment).where(OrgDepartment.id == uuid.UUID(data.department_id)))
+        dept = dept_result.scalar_one_or_none()
+        if dept:
+            dept_path = dept.name
+            dept.member_count = (dept.member_count or 0) + 1
+
+    member = OrgMember(
+        name=data.name,
+        title=data.title or "",
+        email=data.email,
+        phone=data.phone,
+        department_id=uuid.UUID(data.department_id) if data.department_id else None,
+        department_path=dept_path,
+        member_role=data.member_role or "member",
+        tenant_id=current_user.tenant_id,
+        feishu_open_id=None,
+        feishu_user_id=None,
+    )
+    db.add(member)
+    await db.flush()
+    
+    # Create management relation if member is a leader/deputy_leader/director
+    if data.member_role in ("leader", "deputy_leader", "director") and dept:
+        mgmt_relation = OrgManagementRelation(
+            manager_member_id=member.id,
+            manager_role=data.member_role,
+            managed_department_id=dept.id,
+            is_primary=(data.member_role == "leader"),
+            tenant_id=current_user.tenant_id,
+        )
+        db.add(mgmt_relation)
+    
+    await db.commit()
+    return {
+        "id": str(member.id),
+        "name": member.name,
+        "title": member.title,
+        "email": member.email,
+        "phone": member.phone,
+        "department_id": str(member.department_id) if member.department_id else None,
+        "department_path": member.department_path,
+        "member_role": member.member_role,
+    }
+
+
+@router.patch("/org/members/{member_id}")
+async def update_org_member(
+    member_id: uuid.UUID,
+    data: OrgMemberUpdate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an org member."""
+    from app.models.org import OrgManagementRelation
+    from sqlalchemy import delete
+    
+    result = await db.execute(select(OrgMember).where(OrgMember.id == member_id))
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    old_dept_id = member.department_id
+    old_role = member.member_role
+    
+    if data.name is not None:
+        member.name = data.name
+    if data.title is not None:
+        member.title = data.title
+    if data.email is not None:
+        member.email = data.email
+    if data.phone is not None:
+        member.phone = data.phone
+    if data.member_role is not None:
+        member.member_role = data.member_role
+    if data.department_id is not None:
+        new_dept_id = uuid.UUID(data.department_id) if data.department_id else None
+        member.department_id = new_dept_id
+        # Update department_path
+        if new_dept_id:
+            dept_r = await db.execute(select(OrgDepartment).where(OrgDepartment.id == new_dept_id))
+            dept = dept_r.scalar_one_or_none()
+            member.department_path = dept.name if dept else ""
+        else:
+            member.department_path = ""
+        # Update member counts
+        if old_dept_id and old_dept_id != new_dept_id:
+            old_dept_r = await db.execute(select(OrgDepartment).where(OrgDepartment.id == old_dept_id))
+            old_dept = old_dept_r.scalar_one_or_none()
+            if old_dept:
+                old_dept.member_count = max((old_dept.member_count or 1) - 1, 0)
+        if new_dept_id and new_dept_id != old_dept_id:
+            new_dept_r = await db.execute(select(OrgDepartment).where(OrgDepartment.id == new_dept_id))
+            new_dept = new_dept_r.scalar_one_or_none()
+            if new_dept:
+                new_dept.member_count = (new_dept.member_count or 0) + 1
+
+    # Handle management relation updates
+    new_role = member.member_role
+    new_dept_id = member.department_id
+    
+    if new_role != old_role or (data.department_id is not None and new_dept_id != old_dept_id):
+        # Delete old management relations for this member
+        await db.execute(
+            delete(OrgManagementRelation).where(OrgManagementRelation.manager_member_id == member_id)
+        )
+        
+        # Create new management relation if needed
+        if new_role in ("leader", "deputy_leader", "director") and new_dept_id:
+            mgmt_relation = OrgManagementRelation(
+                manager_member_id=member.id,
+                manager_role=new_role,
+                managed_department_id=new_dept_id,
+                is_primary=(new_role == "leader"),
+                tenant_id=current_user.tenant_id,
+            )
+            db.add(mgmt_relation)
+
+    await db.commit()
+    return {
+        "id": str(member.id),
+        "name": member.name,
+        "title": member.title,
+        "email": member.email,
+        "phone": member.phone,
+        "department_id": str(member.department_id) if member.department_id else None,
+        "department_path": member.department_path,
+        "member_role": member.member_role,
+    }
+
+
+@router.delete("/org/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_org_member(
+    member_id: uuid.UUID,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an org member."""
+    result = await db.execute(select(OrgMember).where(OrgMember.id == member_id))
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    # Update department member count
+    if member.department_id:
+        dept_r = await db.execute(select(OrgDepartment).where(OrgDepartment.id == member.department_id))
+        dept = dept_r.scalar_one_or_none()
+        if dept:
+            dept.member_count = max((dept.member_count or 1) - 1, 0)
+    # Delete related agent relationships
+    from app.models.org import AgentRelationship
+    await db.execute(
+        select(AgentRelationship).where(AgentRelationship.member_id == member_id)
+    )
+    from sqlalchemy import delete as sa_delete
+    await db.execute(sa_delete(AgentRelationship).where(AgentRelationship.member_id == member_id))
+    await db.delete(member)
+    await db.commit()
 
 
 # ─── Invitation Codes ───────────────────────────────────
